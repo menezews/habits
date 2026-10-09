@@ -156,10 +156,21 @@ dialog::backdrop{background:rgba(120,40,80,.35);backdrop-filter:blur(3px)}
 .actions .sp{flex:1}
 .err{color:#B3304F;font-size:14px;min-height:1em}
 .trows{list-style:none;margin:0;padding:0;display:grid;gap:12px;max-height:50vh;overflow:auto}
-.trow{display:grid;gap:8px;padding:12px;border-radius:14px;background:color-mix(in srgb,var(--c) 10%,white);border:1px solid color-mix(in srgb,var(--c) 30%,var(--line))}
+.trow{--c:var(--accent);display:grid;gap:8px;padding:12px;border-radius:14px;background:color-mix(in srgb,var(--c) 10%,white);border:1px solid color-mix(in srgb,var(--c) 30%,var(--line))}
 .trow .top3{display:flex;gap:8px}
 .addtag{display:flex;gap:8px}
 
+.check.add{border-style:dashed;color:var(--c)}
+.cell.add{border-style:dashed;color:color-mix(in srgb,var(--c) 55%,white)}
+.check.add[aria-pressed="true"],.cell.add[aria-pressed="true"]{border-style:solid;color:#fff}
+.check b,.cell b{font-weight:800;font-size:15px;line-height:1}
+.cell b{font-size:13px}
+.item .minus{width:34px;height:34px;flex:none}
+.chip.free.on .ct{text-decoration:none;color:var(--ink)}
+label.swatch{position:relative;display:block;cursor:pointer;overflow:hidden}
+.swatch.rainbow{background:conic-gradient(#E0578D,#E58A6B,#D4A024,#6BAA7E,#4FA3A0,#5C9BD1,#8B7FD0,#E0578D)}
+.swatch.rainbow.sel{background:var(--c);border-color:var(--ink)}
+.rainbow input{position:absolute;inset:-4px;width:calc(100% + 8px);height:calc(100% + 8px);opacity:0;cursor:pointer}
 @media (max-width:720px){
   .wrap{padding:20px 12px 40px}
   .mc{min-height:70px;padding:4px}
@@ -237,10 +248,26 @@ dialog::backdrop{background:rgba(120,40,80,.35);backdrop-filter:blur(3px)}
     </div>
     <div class="field hidden" id="newTagBox">
       <input type="text" id="fNewTag" maxlength="24" placeholder="Nome do novo assunto">
-      <div class="swatches" id="newTagSw"></div>
     </div>
 
     <div class="field">
+      <span class="l">Cor do hábito</span>
+      <div class="swatches">
+        <span id="fColors" style="display:contents"></span>
+        <label class="swatch rainbow" id="fCustomWrap" title="Escolher outra cor"><input type="color" id="fColorCustom" aria-label="Escolher outra cor"></label>
+      </div>
+    </div>
+
+    <div class="field">
+      <span class="l">Como acompanhar</span>
+      <div class="seg" id="fMode" style="width:fit-content">
+        <button type="button" data-mode="fixed" aria-selected="true">Dias fixos</button>
+        <button type="button" data-mode="free" aria-selected="false">Quando eu fizer</button>
+      </div>
+      <small id="freeHint" class="hidden" style="color:var(--muted)">Sem meta de dias: você registra uma entrada sempre que fizer.</small>
+    </div>
+
+    <div class="field" id="daysField">
       <span class="l">Repetir em</span>
       <div class="days" id="fDays"></div>
       <div class="presets">
@@ -250,7 +277,7 @@ dialog::backdrop{background:rgba(120,40,80,.35);backdrop-filter:blur(3px)}
       </div>
     </div>
 
-    <div class="row2" style="grid-template-columns:1fr 1fr">
+    <div class="row2" id="schedRow" style="grid-template-columns:1fr 1fr">
       <div class="field"><label for="fPeriod">Momento do dia</label>
         <select id="fPeriod">
           <option value="any">Durante o dia</option>
@@ -299,6 +326,8 @@ const WD_FULL = ['Domingo','Segunda','Terça','Quarta','Quinta','Sexta','Sábado
 const EMOJIS = ['💧','🏃','🧘','📚','🥗','😴','🪥','✍️','🌱','🧹','💊','🎧'];
 const MAX_DAYS = 120;
 const CHECK = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>';
+const PLUS = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>';
+const MINUS = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M5 12h14"/></svg>';
 const PENCIL = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h4L19 9l-4-4L4 16v4z"/></svg>';
 
 const $ = s => document.querySelector(s);
@@ -340,12 +369,20 @@ let state = load();
 let ui = loadUI();
 let anchor = today();
 let editingId = null;
-let newTagColor = PALETTE[0];
 
 /* ---------- consultas ---------- */
 const tagIndex = id => state.tags.findIndex(t => t.id === id);
 const tagOf = h => state.tags.find(t => t.id === h.tagId) || {id:'', name:'Sem assunto', color:'#A58A97'};
-const scheduled = (h, ds) => ds >= h.start && h.days.includes(parse(ds).getDay());
+const hc = h => h.color || tagOf(h).color;
+const isFree = h => h.mode === 'free';
+const entries = (h, ds) => { const v = state.done[ds] && state.done[ds][h.id]; return v ? (Number(v) || 1) : 0; };
+function lastEntry(h, ds){ let best = ''; for(const d in state.done){ if(d <= ds && d > best && state.done[d][h.id]) best = d; } return best; }
+function lastLabel(best){
+  if(best === fmt(today())) return 'hoje';
+  if(best === fmt(addDays(today(), -1))) return 'ontem';
+  const d = parse(best); return `${d.getDate()} ${mShort(d)}`;
+}
+const scheduled = (h, ds) => !isFree(h) && ds >= h.start && h.days.includes(parse(ds).getDay());
 const isDone = (h, ds) => !!(state.done[ds] && state.done[ds][h.id]);
 function visibleHabits(){
   const f = ui.filter.filter(id => tagIndex(id) >= 0);
@@ -367,6 +404,14 @@ function eachDay([s,e], max = 400){ const out = []; for(let d = s; d <= e && out
 function toggle(hid, ds){
   const day = state.done[ds] || (state.done[ds] = {});
   if(day[hid]) delete day[hid]; else day[hid] = true;
+  if(!Object.keys(day).length) delete state.done[ds];
+  save(); renderView();
+}
+
+function addEntry(hid, ds, delta){
+  const day = state.done[ds] || (state.done[ds] = {});
+  const n = Math.max(0, (Number(day[hid]) || (day[hid] ? 1 : 0)) + delta);
+  if(n) day[hid] = n; else delete day[hid];
   if(!Object.keys(day).length) delete state.done[ds];
   save(); renderView();
 }
@@ -396,23 +441,27 @@ function renderFilters(){
   const f = ui.filter.filter(id => tagIndex(id) >= 0);
   ui.filter = f;
   let html = `<button class="tagchip all" type="button" data-tag="" aria-pressed="${!f.length}">Todos</button>`;
-  html += state.tags.map(t => `<button class="tagchip" type="button" data-tag="${esc(t.id)}" style="--c:${t.color}" aria-pressed="${f.includes(t.id)}"><span class="dot"></span>${esc(t.name)}</button>`).join('');
+  html += state.tags.map(t => `<button class="tagchip" type="button" data-tag="${esc(t.id)}" aria-pressed="${f.includes(t.id)}">${esc(t.name)}</button>`).join('');
   html += `<button class="btn sm ghost" type="button" id="manageTags">Gerenciar assuntos</button>`;
   $('#filters').innerHTML = html;
 }
 
 function renderSummary(){
   const hs = visibleHabits();
-  let tot = 0, dn = 0;
+  let tot = 0, dn = 0, fr = 0;
   eachDay(currentRange(), MAX_DAYS + 40).forEach(d => {
     const ds = fmt(d);
-    hs.forEach(h => { if(scheduled(h, ds)){ tot++; if(isDone(h, ds)) dn++; } });
+    hs.forEach(h => {
+      if(scheduled(h, ds)){ tot++; if(isDone(h, ds)) dn++; }
+      else if(isFree(h)) fr += entries(h, ds);
+    });
   });
   const what = {day:'do dia', week:'da semana', month:'do mês', range:'do intervalo'}[ui.view];
   const pct = tot ? Math.round(dn / tot * 100) : 0;
-  $('#summary').innerHTML = tot
-    ? `<div class="txt">${dn} de ${tot} feitos<small>Progresso ${what} · ${pct}%</small></div><div class="bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${pct}"><i style="width:${pct}%"></i></div>`
-    : `<div class="txt">Nada previsto neste período<small>Progresso ${what}</small></div>`;
+  const extra = fr ? `${fr} ${fr === 1 ? 'registro avulso' : 'registros avulsos'}` : '';
+  if(tot) $('#summary').innerHTML = `<div class="txt">${dn} de ${tot} feitos<small>Progresso ${what} · ${pct}%${extra ? ' · ' + extra : ''}</small></div><div class="bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${pct}"><i style="width:${pct}%"></i></div>`;
+  else if(fr) $('#summary').innerHTML = `<div class="txt">${extra}<small>Registrados ${what}</small></div>`;
+  else $('#summary').innerHTML = `<div class="txt">Nada previsto neste período<small>Progresso ${what}</small></div>`;
 }
 
 function emptyState(){
@@ -421,21 +470,32 @@ function emptyState(){
 }
 
 function viewDay(){
-  const ds = fmt(anchor), hs = visibleHabits().filter(h => scheduled(h, ds));
-  if(!hs.length) return `<div class="panel empty"><h2>Nada previsto para este dia</h2><p>Aproveite o descanso, ou crie um hábito novo.</p><button class="btn primary" type="button" data-new>+ Novo hábito</button></div>`;
-  return PERIOD_ORDER.map(p => {
+  const ds = fmt(anchor), vis = visibleHabits(), hs = vis.filter(h => scheduled(h, ds)), free = vis.filter(isFree);
+  if(!hs.length && !free.length) return `<div class="panel empty"><h2>Nada previsto para este dia</h2><p>Aproveite o descanso, ou crie um hábito novo.</p><button class="btn primary" type="button" data-new>+ Novo hábito</button></div>`;
+  let html = PERIOD_ORDER.map(p => {
     const list = hs.filter(h => (h.period || 'any') === p);
     if(!list.length) return '';
     return `<section class="group"><h3>${PERIODS[p]}</h3><ul class="items">${list.map(h => {
       const t = tagOf(h), done = isDone(h, ds);
-      return `<li class="item ${done ? 'done' : ''}" style="--c:${t.color}">
+      return `<li class="item ${done ? 'done' : ''}" style="--c:${hc(h)}">
         <button class="check" type="button" data-toggle data-h="${h.id}" data-d="${ds}" aria-pressed="${done}" aria-label="Marcar ${esc(h.name)} como feito">${CHECK}</button>
         <div class="meta"><div class="name">${esc(h.emoji)} ${esc(h.name)}</div>
-        <div class="sub"><span class="pill" style="--c:${t.color}">${esc(t.name)}</span>${h.note ? `<span>${esc(h.note)}</span>` : ''}</div></div>
+        <div class="sub"><span class="pill" style="--c:${hc(h)}">${esc(t.name)}</span>${h.note ? `<span>${esc(h.note)}</span>` : ''}</div></div>
         <button class="btn ghost iconbtn" style="border:0" type="button" data-edit="${h.id}" aria-label="Editar ${esc(h.name)}">${PENCIL}</button>
       </li>`;
     }).join('')}</ul></section>`;
   }).join('');
+  if(free.length) html += `<section class="group"><h3>Quando eu fizer</h3><ul class="items">${free.map(h => {
+    const t = tagOf(h), n = entries(h, ds), last = lastEntry(h, ds);
+    return `<li class="item" style="--c:${hc(h)}">
+      <button class="check add" type="button" data-add data-h="${h.id}" data-d="${ds}" aria-pressed="${n > 0}" aria-label="Registrar ${esc(h.name)}">${n > 1 ? `<b>${n}</b>` : n ? CHECK : PLUS}</button>
+      <div class="meta"><div class="name">${esc(h.emoji)} ${esc(h.name)}</div>
+      <div class="sub"><span class="pill" style="--c:${hc(h)}">${esc(t.name)}</span>${h.note ? `<span>${esc(h.note)}</span>` : ''}${last ? `<span>Última vez: ${lastLabel(last)}</span>` : ''}</div></div>
+      ${n ? `<button class="btn ghost iconbtn minus" style="border:0" type="button" data-sub data-h="${h.id}" data-d="${ds}" aria-label="Tirar um registro de ${esc(h.name)}">${MINUS}</button>` : ''}
+      <button class="btn ghost iconbtn" style="border:0" type="button" data-edit="${h.id}" aria-label="Editar ${esc(h.name)}">${PENCIL}</button>
+    </li>`;
+  }).join('')}</ul></section>`;
+  return html;
 }
 
 function viewGrid(){
@@ -443,7 +503,7 @@ function viewGrid(){
   const all = eachDay(range, 1000);
   const days = all.slice(0, MAX_DAYS);
   const dss = days.map(fmt), tds = fmt(today());
-  const hs = visibleHabits().filter(h => dss.some(ds => scheduled(h, ds)));
+  const hs = visibleHabits().filter(h => isFree(h) || dss.some(ds => scheduled(h, ds)));
   if(!hs.length) return `<div class="panel empty"><h2>Nada previsto neste período</h2><p>Mude o período ou crie um hábito novo.</p><button class="btn primary" type="button" data-new>+ Novo hábito</button></div>`;
   const showMonth = days.length > 8;
   const head = days.map((d,i) => `<th class="${dss[i] === tds ? 'today' : ''}" scope="col">${showMonth && (d.getDate() === 1 || i === 0) ? `<em>${mShort(d)}</em>` : ''}${WD[d.getDay()]}<b>${d.getDate()}</b></th>`).join('');
@@ -451,11 +511,15 @@ function viewGrid(){
     const t = tagOf(h);
     const cells = dss.map(ds => {
       const cls = ds === tds ? 'today' : '';
+      if(isFree(h)){
+        const n = entries(h, ds);
+        return `<td class="${cls}"><button class="cell add" type="button" data-add data-h="${h.id}" data-d="${ds}" aria-pressed="${n > 0}" aria-label="Registrar ${esc(h.name)}, ${ds}" title="Clique para somar um registro. Shift+clique tira um.">${n > 1 ? `<b>${n}</b>` : n ? CHECK : PLUS}</button></td>`;
+      }
       if(!scheduled(h, ds)) return `<td class="${cls}"><span class="none"></span></td>`;
       const done = isDone(h, ds);
       return `<td class="${cls}"><button class="cell" type="button" data-toggle data-h="${h.id}" data-d="${ds}" aria-pressed="${done}" aria-label="${esc(h.name)}, ${ds}" title="${esc(h.name)} · ${parse(ds).toLocaleDateString('pt-BR')}">${CHECK}</button></td>`;
     }).join('');
-    return `<tr style="--c:${t.color}"><th class="hcell" scope="row"><button type="button" class="rowhead" data-edit="${h.id}" title="Editar hábito"><span>${esc(h.emoji)}</span><span style="min-width:0"><span class="nm" style="display:block">${esc(h.name)}</span><span class="tg">${esc(t.name)}</span></span></button></th>${cells}</tr>`;
+    return `<tr style="--c:${hc(h)}"><th class="hcell" scope="row"><button type="button" class="rowhead" data-edit="${h.id}" title="Editar hábito"><span>${esc(h.emoji)}</span><span style="min-width:0"><span class="nm" style="display:block">${esc(h.name)}</span><span class="tg">${esc(t.name)}${isFree(h) ? ' (avulso)' : ''}</span></span></button></th>${cells}</tr>`;
   }).join('');
   const foot = dss.map(ds => {
     let tot = 0, dn = 0;
@@ -475,13 +539,15 @@ function viewMonth(){
   let html = WD.map(w => `<div class="mh">${w}</div>`).join('');
   for(let i = 0; i < cells; i++){
     const d = addDays(start, i), ds = fmt(d);
-    const list = hs.filter(h => scheduled(h, ds));
-    const dn = list.filter(h => isDone(h, ds)).length;
+    const sched = hs.filter(h => scheduled(h, ds));
+    const dn = sched.filter(h => isDone(h, ds)).length;
+    const list = hs.filter(h => scheduled(h, ds) || (isFree(h) && entries(h, ds) > 0));
     const shown = list.slice(0,4);
     html += `<div class="mc ${d.getMonth() !== anchor.getMonth() ? 'out' : ''} ${ds === tds ? 'today' : ''}" data-day="${ds}" tabindex="0" role="button" aria-label="${d.toLocaleDateString('pt-BR',{weekday:'long', day:'numeric', month:'long'})}: abrir dia">
-      <div class="t2"><span class="dn">${d.getDate()}</span>${list.length ? `<span>${dn}/${list.length}</span>` : ''}</div>
+      <div class="t2"><span class="dn">${d.getDate()}</span>${sched.length ? `<span>${dn}/${sched.length}</span>` : ''}</div>
       <div class="chips">${shown.map(h => { const t = tagOf(h), done = isDone(h, ds);
-        return `<button class="chip ${done ? 'on' : ''}" type="button" style="--c:${t.color}" data-toggle data-h="${h.id}" data-d="${ds}" aria-pressed="${done}" title="${esc(h.name)}"><span class="dot"></span><span class="ct">${esc(h.emoji)} ${esc(h.name)}</span></button>`; }).join('')}
+        if(isFree(h)){ const n = entries(h, ds); return `<span class="chip free on" style="--c:${hc(h)}" title="${esc(h.name)}"><span class="dot"></span><span class="ct">${esc(h.emoji)} ${esc(h.name)}${n > 1 ? ` ×${n}` : ''}</span></span>`; }
+        return `<button class="chip ${done ? 'on' : ''}" type="button" style="--c:${hc(h)}" data-toggle data-h="${h.id}" data-d="${ds}" aria-pressed="${done}" title="${esc(h.name)}"><span class="dot"></span><span class="ct">${esc(h.emoji)} ${esc(h.name)}</span></button>`; }).join('')}
       ${list.length > 4 ? `<span class="more">+${list.length - 4}</span>` : ''}</div>
     </div>`;
   }
@@ -549,6 +615,8 @@ $('#filters').addEventListener('click', e => {
 
 $('#view').addEventListener('click', e => {
   const t = e.target.closest('[data-toggle]'); if(t){ toggle(t.dataset.h, t.dataset.d); return; }
+  const ad = e.target.closest('[data-add]'); if(ad){ addEntry(ad.dataset.h, ad.dataset.d, e.shiftKey ? -1 : 1); return; }
+  const sb = e.target.closest('[data-sub]'); if(sb){ addEntry(sb.dataset.h, sb.dataset.d, -1); return; }
   const ed = e.target.closest('[data-edit]'); if(ed){ openHabit(ed.dataset.edit); return; }
   if(e.target.closest('[data-new]')){ openHabit(); return; }
   const dy = e.target.closest('[data-day]');
@@ -556,6 +624,11 @@ $('#view').addEventListener('click', e => {
 });
 $('#view').addEventListener('keydown', e => {
   if((e.key === 'Enter' || e.key === ' ') && e.target.matches('[data-day]')){ e.preventDefault(); e.target.click(); }
+});
+
+$('#view').addEventListener('contextmenu', e => {
+  const ad = e.target.closest('[data-add]'); if(!ad) return;
+  e.preventDefault(); addEntry(ad.dataset.h, ad.dataset.d, -1);
 });
 
 /* ---------- janela do hábito ---------- */
@@ -571,17 +644,17 @@ function fillTagSelect(selected){
   syncNewTag();
 }
 function syncNewTag(){
-  const isNew = $('#fTag').value === '__new';
-  $('#newTagBox').classList.toggle('hidden', !isNew);
-  if(isNew){
-    const used = state.tags.map(t => t.color);
-    newTagColor = PALETTE.find(c => !used.includes(c)) || PALETTE[0];
-    drawNewTagSwatches();
-  }
+  $('#newTagBox').classList.toggle('hidden', $('#fTag').value !== '__new');
 }
-function drawNewTagSwatches(){
-  renderSwatches($('#newTagSw'), newTagColor, c => { newTagColor = c; drawNewTagSwatches(); });
+let formColor = PALETTE[0];
+function drawColors(){
+  renderSwatches($('#fColors'), formColor, c => { formColor = c; drawColors(); });
+  const w = $('#fCustomWrap');
+  w.style.setProperty('--c', formColor);
+  w.classList.toggle('sel', !PALETTE.includes(formColor));
+  $('#fColorCustom').value = formColor.length === 7 ? formColor.toLowerCase() : '#e0578d';
 }
+$('#fColorCustom').addEventListener('input', e => { formColor = e.target.value.toUpperCase(); drawColors(); });
 function setDays(days){ document.querySelectorAll('#fDays .dow').forEach(b => b.setAttribute('aria-pressed', String(days.includes(Number(b.dataset.dow))))); }
 function getDays(){ return [...document.querySelectorAll('#fDays .dow')].filter(b => b.getAttribute('aria-pressed') === 'true').map(b => Number(b.dataset.dow)); }
 
@@ -594,6 +667,15 @@ document.querySelector('.presets').addEventListener('click', e => {
 $('#emojiPicks').innerHTML = EMOJIS.map(e => `<button type="button" data-emoji="${e}" aria-label="Usar ${e}">${e}</button>`).join('');
 $('#emojiPicks').addEventListener('click', e => { const b = e.target.closest('[data-emoji]'); if(b) $('#fEmoji').value = b.dataset.emoji; });
 $('#fTag').addEventListener('change', syncNewTag);
+let mode = 'fixed';
+function setMode(m){
+  mode = m;
+  document.querySelectorAll('#fMode button').forEach(b => b.setAttribute('aria-selected', String(b.dataset.mode === m)));
+  $('#daysField').classList.toggle('hidden', m === 'free');
+  $('#schedRow').classList.toggle('hidden', m === 'free');
+  $('#freeHint').classList.toggle('hidden', m !== 'free');
+}
+$('#fMode').addEventListener('click', e => { const b = e.target.closest('[data-mode]'); if(b) setMode(b.dataset.mode); });
 
 function openHabit(id){
   const h = id ? state.habits.find(x => x.id === id) : null;
@@ -604,7 +686,10 @@ function openHabit(id){
   const firstFilter = ui.filter.find(x => tagIndex(x) >= 0);
   fillTagSelect(h ? (tagIndex(h.tagId) >= 0 ? h.tagId : '') : (firstFilter || (state.tags[0] ? state.tags[0].id : '__new')));
   $('#fNewTag').value = '';
-  setDays(h ? h.days : [0,1,2,3,4,5,6]);
+  formColor = h ? hc(h) : (PALETTE.find(c => !state.habits.some(x => x.color === c)) || PALETTE[state.habits.length % PALETTE.length]);
+  drawColors();
+  setMode(h && isFree(h) ? 'free' : 'fixed');
+  setDays(h && h.days.length ? h.days : [0,1,2,3,4,5,6]);
   $('#fPeriod').value = h ? (h.period || 'any') : 'any';
   $('#fStart').value = h ? h.start : fmt(today());
   $('#fNote').value = h ? (h.note || '') : '';
@@ -623,18 +708,19 @@ $('#delHabit').onclick = () => {
 };
 $('#habitForm').addEventListener('submit', e => {
   e.preventDefault();
-  const name = $('#fName').value.trim(), days = getDays();
+  const free = mode === 'free';
+  const name = $('#fName').value.trim(), days = free ? [] : getDays();
   if(!name){ $('#habitErr').textContent = 'Dê um nome ao hábito.'; return; }
-  if(!days.length){ $('#habitErr').textContent = 'Escolha pelo menos um dia da semana.'; return; }
+  if(!free && !days.length){ $('#habitErr').textContent = 'Escolha pelo menos um dia da semana.'; return; }
   let tagId = $('#fTag').value;
   if(tagId === '__new'){
     const tn = $('#fNewTag').value.trim();
     if(!tn){ $('#habitErr').textContent = 'Dê um nome ao novo assunto.'; return; }
     const exist = state.tags.find(t => t.name.toLowerCase() === tn.toLowerCase());
     if(exist) tagId = exist.id;
-    else { tagId = uid(); state.tags.push({id:tagId, name:tn, color:newTagColor}); }
+    else { tagId = uid(); state.tags.push({id:tagId, name:tn}); }
   }
-  const data = { name, emoji: firstGrapheme($('#fEmoji').value) || '🌱', tagId, days, period: $('#fPeriod').value, start: $('#fStart').value || fmt(today()), note: $('#fNote').value.trim() };
+  const data = { name, color: formColor, mode: free ? 'free' : 'fixed', emoji: firstGrapheme($('#fEmoji').value) || '🌱', tagId, days, period: $('#fPeriod').value, start: $('#fStart').value || fmt(today()), note: $('#fNote').value.trim() };
   if(editingId) Object.assign(state.habits.find(x => x.id === editingId), data);
   else state.habits.push(Object.assign({id: uid()}, data));
   save(); habitDlg.close(); renderFilters(); renderView();
@@ -643,9 +729,8 @@ $('#habitForm').addEventListener('submit', e => {
 /* ---------- janela de assuntos ---------- */
 const tagsDlg = $('#tagsDlg');
 function renderTagRows(){
-  $('#tagRows').innerHTML = state.tags.length ? state.tags.map(t => `<li class="trow" data-id="${esc(t.id)}" style="--c:${t.color}">
+  $('#tagRows').innerHTML = state.tags.length ? state.tags.map(t => `<li class="trow" data-id="${esc(t.id)}">
     <div class="top3"><input type="text" class="tname" value="${esc(t.name)}" maxlength="24" aria-label="Nome do assunto"><button class="btn sm danger" type="button" data-deltag>Excluir</button></div>
-    <div class="swatches">${PALETTE.map(c => `<button type="button" class="swatch" style="--c:${c}" data-color="${c}" aria-pressed="${c === t.color}" aria-label="Cor ${c}"></button>`).join('')}</div>
   </li>`).join('') : '<li style="color:var(--muted)">Nenhum assunto ainda. Adicione o primeiro abaixo.</li>';
 }
 function openTags(){ renderTagRows(); tagsDlg.showModal(); }
@@ -673,7 +758,7 @@ $('#addTagForm').addEventListener('submit', e => {
   const n = $('#addTagName').value.trim(); if(!n) return;
   if(state.tags.some(t => t.name.toLowerCase() === n.toLowerCase())){ $('#addTagName').value = ''; return; }
   const used = state.tags.map(t => t.color);
-  state.tags.push({id: uid(), name: n, color: PALETTE.find(c => !used.includes(c)) || PALETTE[state.tags.length % PALETTE.length]});
+  state.tags.push({id: uid(), name: n});
   $('#addTagName').value = '';
   save(); renderTagRows(); renderFilters(); renderView();
 });
